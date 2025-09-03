@@ -1,8 +1,13 @@
 package net.citizensnpcs;
 
 import java.lang.reflect.Method;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -131,6 +136,14 @@ public class EventListen implements Listener {
     private final SkinUpdateTracker skinUpdateTracker;
     private final ListMultimap<ChunkCoord, NPC> toRespawn = ArrayListMultimap.create(64, 4);
 
+    // Queue of players who actually moved (filtered) — processed in batches
+    private final ConcurrentLinkedQueue<UUID> movedPlayersQueue = new ConcurrentLinkedQueue<>();
+    private final Set<UUID> enqueuedPlayers = Collections.newSetFromMap(new ConcurrentHashMap<UUID, Boolean>());
+    // Per-tick movement processing budget (prevents lag during mass movement)
+    private static final int PLAYER_MOVE_PROCESS_BUDGET_PER_TICK = 128;
+    // Whether Paper's EntityMoveEvent is available — then don't use PlayerMoveEvent as a source
+    private boolean hasPaperEntityMoveEvent = false;
+
     EventListen(Citizens plugin) {
         this.plugin = plugin;
         skinUpdateTracker = new SkinUpdateTracker();
@@ -224,6 +237,32 @@ public class EventListen implements Listener {
         if (paperEntityMoveEventClazz != null) {
             registerMoveEvent(paperEntityMoveEventClazz);
         }
+
+        // Event-driven player movement tracking
+        // If Paper's EntityMoveEvent is available — use it for players
+        if (paperEntityMoveEventClazz != null) {
+            hasPaperEntityMoveEvent = true;
+            registerPlayerMoveEvent(paperEntityMoveEventClazz);
+        } else {
+            hasPaperEntityMoveEvent = false;
+        }
+        // Scheduler: process player movements in batches to avoid blocking the tick
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                int processed = 0;
+                UUID id;
+                while (processed < PLAYER_MOVE_PROCESS_BUDGET_PER_TICK && (id = movedPlayersQueue.poll()) != null) {
+                    enqueuedPlayers.remove(id);
+                    Player p = Bukkit.getPlayer(id);
+                    if (p != null && p.isOnline()) {
+                        // Previously done on every PlayerMoveEvent — now limited by a per-tick budget
+                        skinUpdateTracker.onPlayerMove(p);
+                    }
+                    processed++;
+                }
+            }
+        }.runTaskTimer(plugin, 1L, 1L);
     }
 
     private void checkCreationEvent(CommandSenderCreateNPCEvent event) {
@@ -704,7 +743,13 @@ public class EventListen implements Listener {
     // a player moves a certain distance from their last position.
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerMove(PlayerMoveEvent event) {
-        skinUpdateTracker.onPlayerMove(event.getPlayer());
+        // If Paper's EntityMoveEvent is available — use it instead of PlayerMoveEvent (to avoid duplicate handling)
+        if (hasPaperEntityMoveEvent)
+            return;
+        // Filter: ignore micro-movement (no chunk change and small delta)
+        if (!movedEnough(event.getFrom(), event.getTo()))
+            return;
+        enqueuePlayerMovement(event.getPlayer(), event.getFrom(), event.getTo());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -945,6 +990,36 @@ public class EventListen implements Listener {
         }
     }
 
+    // Player movement event registration (Paper)
+    private void registerPlayerMoveEvent(Class<?> clazz) {
+        try {
+            final HandlerList handlers = (HandlerList) clazz.getMethod("getHandlerList").invoke(null);
+            final Method getEntity = clazz.getMethod("getEntity");
+            final Method getFrom = clazz.getMethod("getFrom");
+            final Method getTo = clazz.getMethod("getTo");
+            handlers.register(new RegisteredListener(new Listener() {
+            }, (listener, event) -> {
+                if (event.getClass() != clazz)
+                    return;
+                try {
+                    final Entity entity = (Entity) getEntity.invoke(event);
+                    if (!(entity instanceof Player))
+                        return;
+                    final Location from = (Location) getFrom.invoke(event);
+                    final Location to = (Location) getTo.invoke(event);
+                    if (!movedEnough(from, to))
+                        return;
+                    enqueuePlayerMovement((Player) entity, from, to);
+                } catch (Throwable ex) {
+                    ex.printStackTrace();
+                }
+            }, EventPriority.MONITOR, plugin, true));
+        } catch (Throwable ex) {
+            Messaging.severe("Error registering player move event forwarder");
+            ex.printStackTrace();
+        }
+    }
+
     private void registerPushEvent(Class<?> clazz) {
         try {
             HandlerList handlers = (HandlerList) clazz.getMethod("getHandlerList").invoke(null);
@@ -1050,4 +1125,23 @@ public class EventListen implements Listener {
     }
 
     private static boolean SUPPORT_STOP_USE_ITEM = true;
+
+    private boolean movedEnough(Location from, Location to) {
+        if (from == null || to == null) return false;
+        if (!Objects.equals(from.getWorld(), to.getWorld())) return true;
+        // Consider movement significant if the chunk changed or delta > ~0.2 block
+        if ((from.getBlockX() >> 4) != (to.getBlockX() >> 4)) return true;
+        if ((from.getBlockZ() >> 4) != (to.getBlockZ() >> 4)) return true;
+        double dx = to.getX() - from.getX();
+        double dy = to.getY() - from.getY();
+        double dz = to.getZ() - from.getZ();
+        return (dx * dx + dy * dy + dz * dz) > 0.04; // 0.2^2
+    }
+
+    private void enqueuePlayerMovement(Player player, Location from, Location to) {
+        UUID id = player.getUniqueId();
+        if (enqueuedPlayers.add(id)) {
+            movedPlayersQueue.add(id);
+        }
+    }
 }
