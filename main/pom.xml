@@ -26,6 +26,10 @@
             <url>https://repo.papermc.io/repository/maven-public/</url>
         </repository>
         <repository>
+          <id>elmakers-repo</id>
+          <url>http://maven.elmakers.com/repository/</url>
+        </repository>
+        <repository>
             <id>jitpack.io</id>
             <url>https://jitpack.io</url>
             <snapshots>
@@ -276,3 +280,4 @@
     </build>
 
 </project>
+
