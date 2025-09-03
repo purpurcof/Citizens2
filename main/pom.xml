@@ -28,6 +28,8 @@
         <repository>
             <id>elmakers-repo</id>
             <url>https://maven.elmakers.com/repository/</url>
+            <releases><enabled>true</enabled></releases>
+            <snapshots><enabled>true</enabled></snapshots>
         </repository>
         <repository>
             <id>jitpack.io</id>
@@ -280,6 +282,7 @@
     </build>
 
 </project>
+
 
 
 
