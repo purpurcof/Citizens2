@@ -21,7 +21,7 @@
         </dependency>
         <dependency>
             <groupId>org.spigotmc</groupId>
-            <artifactId>spigot-api</artifactId>
+            <artifactId>spigot</artifactId>
             <version>${craftbukkit.version}</version>
             <classifier>remapped-mojang</classifier>
             <scope>provided</scope>
