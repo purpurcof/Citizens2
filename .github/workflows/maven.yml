@@ -14,8 +14,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) Под JDK 17 собираем Spigot 1.19.4 и 1.20.6 (remapped)
-      - name: Set up JDK 17 (for 1.19.4/1.20.6 BuildTools)
+      # 1) Под JDK 17 собираем Spigot 1.19.4 (remapped)
+      - name: Set up JDK 17 (for Spigot 1.19.4 BuildTools)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -35,6 +35,14 @@ jobs:
             java -jar BuildTools.jar --rev 1.19.4 --remapped
           fi
 
+      # 2) Под JDK 21 собираем Spigot 1.20.6 (remapped) и 1.21.8, затем собираем проект
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
       - name: Build Spigot 1.20.6 (remapped-mojang)
         shell: bash
         run: |
@@ -48,25 +56,17 @@ jobs:
             java -jar BuildTools.jar --rev 1.20.6 --remapped
           fi
 
-      # 2) Под JDK 21 собираем Spigot 1.21.8 и компилируем проект
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: maven
-
-      - name: Build Spigot 1.21.8
+      - name: Build Spigot 1.21.8 (remapped)
         shell: bash
         run: |
           set -e
-          ART="$HOME/.m2/repository/org/spigotmc/spigot/1.21.8-R0.1-SNAPSHOT/spigot-1.21.8-R0.1-SNAPSHOT.jar"
+          ART="$HOME/.m2/repository/org/spigotmc/spigot/1.21.8-R0.1-SNAPSHOT/spigot-1.21.8-R0.1-SNAPSHOT-remapped-mojang.jar"
           if [ -f "$ART" ]; then
-            echo "Spigot 1.21.8 уже есть в Maven cache."
+            echo "Spigot 1.21.8 remapped-mojang уже есть в Maven cache."
           else
             mkdir -p buildtools/1.21.8 && cd buildtools/1.21.8
             curl -sSLO https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar
-            java -jar BuildTools.jar --rev 1.21.8
+            java -jar BuildTools.jar --rev 1.21.8 --remapped
           fi
 
       - name: Build with Maven
