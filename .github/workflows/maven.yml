@@ -84,7 +84,9 @@ jobs:
             !**/*-sources.jar
             !**/*-javadoc.jar
 
+      # Запускаем сабмит графа зависимостей только в основном репозитории на push.
       - name: Update dependency graph
+        if: ${{ github.repository == 'CitizensDev/Citizens2' && github.event_name == 'push' }}
         uses: advanced-security/maven-dependency-submission-action@v4
         with:
           maven-args: -DskipTests
