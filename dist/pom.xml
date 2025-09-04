@@ -1,6 +1,6 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>net.citizensnpcs</groupId>
@@ -14,10 +14,6 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-assembly-plugin</artifactId>
-                <configuration>
-                    <finalName>Citizens-${CITIZENS_VERSION}-b${BUILD_NUMBER}</finalName>
-                    <appendAssemblyId>false</appendAssemblyId>
-                </configuration>
                 <version>${maven-assembly-plugin.version}</version>
                 <executions>
                     <execution>
@@ -27,13 +23,28 @@
                             <goal>single</goal>
                         </goals>
                         <configuration>
+                            <!-- Имя финального файла -->
+                            <finalName>Citizens-${CITIZENS_VERSION}-b${BUILD_NUMBER}</finalName>
                             <appendAssemblyId>false</appendAssemblyId>
+
+                            <!-- Дескриптор лежит в модуле main -->
                             <descriptors>
-                                <descriptor>src/main/assembly/all-jar.xml</descriptor>
+                                <descriptor>${project.basedir}/../main/assembly/all-jar.xml</descriptor>
                             </descriptors>
+
+                            <!-- Манифест финального JAR -->
                             <archive>
+                                <manifest>
+                                    <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                                </manifest>
                                 <manifestEntries>
                                     <paperweight-mappings-namespace>spigot</paperweight-mappings-namespace>
+                                    <Implementation-Title>Citizens</Implementation-Title>
+                                    <Implementation-Version>${CITIZENS_VERSION}-b${BUILD_NUMBER}
+                                    </Implementation-Version>
+                                    <Build-Number>${BUILD_NUMBER}</Build-Number>
+                                    <Build-Commit>${env.GITHUB_SHA}</Build-Commit>
+                                    <Built-By>GitHubActions</Built-By>
                                 </manifestEntries>
                             </archive>
                         </configuration>
@@ -67,7 +78,7 @@
                     <version>${project.version}</version>
                     <type>jar</type>
                     <scope>compile</scope>
-                </dependency> 
+                </dependency>
                 <dependency>
                     <groupId>${project.groupId}</groupId>
                     <artifactId>citizens-v1_19_R3</artifactId>
@@ -214,4 +225,5 @@
             </dependencies>
         </profile>
     </profiles>
+
 </project>
