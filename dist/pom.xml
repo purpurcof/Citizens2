@@ -27,9 +27,9 @@
                             <finalName>Citizens-${CITIZENS_VERSION}-b${BUILD_NUMBER}</finalName>
                             <appendAssemblyId>false</appendAssemblyId>
 
-                            <!-- Дескриптор лежит в модуле main -->
+                            <!-- Descriptor теперь лежит в текущем модуле -->
                             <descriptors>
-                                <descriptor>${project.basedir}/../main/assembly/all-jar.xml</descriptor>
+                                <descriptor>src/main/assembly/all-jar.xml</descriptor>
                             </descriptors>
 
                             <!-- Манифест финального JAR -->
