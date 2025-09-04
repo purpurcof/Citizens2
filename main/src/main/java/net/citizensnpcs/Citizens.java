@@ -403,7 +403,18 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
         traitFactory = new CitizensTraitFactory(this);
         selector = new NPCSelector(this);
 
-        saveResource("/templates/citizens/templates.yml", true);
+        // Создаём data-фолдер на всякий случай
+        getDataFolder().mkdirs();
+
+        // Проверим, что ресурс действительно есть в JAR
+        if (getResource("templates/citizens/templates.yml") == null) {
+            getLogger().severe("Missing resource in JAR: templates/citizens/templates.yml");
+        } else {
+        // Копируем дефолтный шаблон в plugins/Citizens/templates/citizens/templates.yml
+        // Поставь false, если не хочешь затирать изменения пользователя
+        saveResource("templates/citizens/templates.yml", false);
+        }
+
         templateRegistry = new TemplateRegistry(new File(getDataFolder(), "templates").toPath());
 
         if (!new File(getDataFolder(), "skins").exists()) {
@@ -616,3 +627,4 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
         }
     }
 }
+
