@@ -627,5 +627,3 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
         }
     }
 }
-
-
