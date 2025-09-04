@@ -72,8 +72,10 @@ jobs:
             java -jar BuildTools.jar --rev 1.21.8 --remapped
           fi
 
-      - name: Build with Maven
-        run: mvn -B -U -DskipTests package --file pom.xml
+      - name: Build with Maven (pass build number)
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: mvn -B -U -DskipTests -DBUILD_NUMBER=${BUILD_NUMBER} package --file pom.xml
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
