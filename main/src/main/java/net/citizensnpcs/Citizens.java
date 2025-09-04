@@ -411,8 +411,8 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
             getLogger().severe("Missing resource in JAR: templates/citizens/templates.yml");
         } else {
         // Копируем дефолтный шаблон в plugins/Citizens/templates/citizens/templates.yml
-        // Поставь false, если не хочешь затирать изменения пользователя
-        saveResource("templates/citizens/templates.yml", false);
+        // Поставьте false, если не хотите затирать изменения пользователя
+            saveResource("templates/citizens/templates.yml", false);
         }
 
         templateRegistry = new TemplateRegistry(new File(getDataFolder(), "templates").toPath());
@@ -627,4 +627,5 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
         }
     }
 }
+
 
