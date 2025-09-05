@@ -72,21 +72,19 @@ jobs:
             java -jar BuildTools.jar --rev 1.21.8 --remapped
           fi
 
-      - name: Build with Maven (pass build number)
+      - name: Build with Maven (only dist; pass build number)
         env:
           BUILD_NUMBER: ${{ github.run_number }}
-        run: mvn -B -U -DskipTests -DBUILD_NUMBER=${BUILD_NUMBER} package --file pom.xml
+        run: mvn -B -U -DskipTests -DBUILD_NUMBER=${BUILD_NUMBER} -pl dist -am package --file pom.xml
 
-      - name: Upload artifacts
+      - name: Upload Citizens plugin jar
         uses: actions/upload-artifact@v4
         with:
-          name: citizens-build
-          path: |
-            **/target/*.jar
-            !**/*-sources.jar
-            !**/*-javadoc.jar
+          name: Citizens
+          path: dist/target/Citizens-*.jar
+          if-no-files-found: error
 
-      # Запускаем сабмит графа зависимостей только в основном репозитории на push.
+      # Submit dependency graph only for the main repo on push
       - name: Update dependency graph
         if: ${{ github.repository == 'CitizensDev/Citizens2' && github.event_name == 'push' }}
         uses: advanced-security/maven-dependency-submission-action@v4
