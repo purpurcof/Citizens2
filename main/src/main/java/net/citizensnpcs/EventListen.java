@@ -1,13 +1,8 @@
 package net.citizensnpcs;
 
 import java.lang.reflect.Method;
-import java.util.Collections;
 import java.util.List;
-import java.util.Set;
 import java.util.Objects;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -134,19 +129,17 @@ public class EventListen implements Listener {
     private Listener chunkEventListener;
     private Citizens plugin;
     private final SkinUpdateTracker skinUpdateTracker;
+
+    // Tracks NPCs that should be respawned when their chunk is available.
     private final ListMultimap<ChunkCoord, NPC> toRespawn = ArrayListMultimap.create(64, 4);
 
-    // Queue of players who actually moved (filtered) — processed in batches
-    private final ConcurrentLinkedQueue<UUID> movedPlayersQueue = new ConcurrentLinkedQueue<>();
-    private final Set<UUID> enqueuedPlayers = Collections.newSetFromMap(new ConcurrentHashMap<UUID, Boolean>());
-    // Per-tick movement processing budget (prevents lag during mass movement)
-    private static final int PLAYER_MOVE_PROCESS_BUDGET_PER_TICK = 128;
-    // Whether Paper's EntityMoveEvent is available — then don't use PlayerMoveEvent as a source
-    private boolean hasPaperEntityMoveEvent = false;
+    private static boolean SUPPORT_STOP_USE_ITEM = true;
 
     EventListen(Citizens plugin) {
         this.plugin = plugin;
-        skinUpdateTracker = new SkinUpdateTracker();
+        this.skinUpdateTracker = new SkinUpdateTracker();
+
+        // Compatibility: Entity item pickup prevention for NPC holders
         try {
             Class.forName("org.bukkit.event.entity.EntityPickupItemEvent");
             Bukkit.getPluginManager().registerEvents(new Listener() {
@@ -158,6 +151,7 @@ public class EventListen implements Listener {
                 }
             }, plugin);
         } catch (Throwable ex) {
+            // Legacy API fallback (older Spigot)
             Bukkit.getPluginManager().registerEvents(new Listener() {
                 @EventHandler
                 public void onPlayerPickupItemEvent(PlayerPickupItemEvent event) {
@@ -167,6 +161,8 @@ public class EventListen implements Listener {
                 }
             }, plugin);
         }
+
+        // Compatibility: entity load/unload batch events (Paper/modern Spigot)
         try {
             Class.forName("org.bukkit.event.world.EntitiesLoadEvent");
             Bukkit.getPluginManager().registerEvents(new Listener() {
@@ -184,8 +180,7 @@ public class EventListen implements Listener {
                                     (event.getChunk().getZ() + 1 << 4) + 0.5 }));
                     for (Entity entity : event.getEntities()) {
                         NPC npc = plugin.getNPCRegistry().getNPC(entity);
-                        // XXX npc#isSpawned() checks valid status which is now inconsistent on chunk unload
-                        // between different server software so check for npc.getEntity() == null instead.
+                        // npc#isSpawned() validity is inconsistent on unload across servers; use entity null check.
                         if (npc == null || npc.getEntity() == null || toDespawn.contains(npc))
                             continue;
 
@@ -197,7 +192,10 @@ public class EventListen implements Listener {
                 }
             }, plugin);
         } catch (Throwable ex) {
+            // Ignore: server doesn't have EntitiesLoad/Unload events
         }
+
+        // Cancel transformations for protected NPCs (e.g., villager to zombie)
         try {
             Class.forName("org.bukkit.event.entity.EntityTransformEvent");
             Bukkit.getPluginManager().registerEvents(new Listener() {
@@ -212,7 +210,11 @@ public class EventListen implements Listener {
                 }
             }, plugin);
         } catch (Throwable ex) {
+            // Ignore: old server without EntityTransformEvent
         }
+
+        // Optional Paper-specific events bridged reflectively for NPCs only (not for players).
+        // Using reflection here avoids a hard compile-time dependency on Paper.
         Class<?> kbc = null;
         try {
             kbc = Class.forName("com.destroystokyo.paper.event.entity.EntityKnockbackByEntityEvent");
@@ -235,34 +237,13 @@ public class EventListen implements Listener {
         } catch (ClassNotFoundException e) {
         }
         if (paperEntityMoveEventClazz != null) {
+            // Only NPC move bridging — no player handling via reflection.
             registerMoveEvent(paperEntityMoveEventClazz);
         }
 
-        // Event-driven player movement tracking
-        // If Paper's EntityMoveEvent is available — use it for players
-        if (paperEntityMoveEventClazz != null) {
-            hasPaperEntityMoveEvent = true;
-            registerPlayerMoveEvent(paperEntityMoveEventClazz);
-        } else {
-            hasPaperEntityMoveEvent = false;
-        }
-        // Scheduler: process player movements in batches to avoid blocking the tick
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                int processed = 0;
-                UUID id;
-                while (processed < PLAYER_MOVE_PROCESS_BUDGET_PER_TICK && (id = movedPlayersQueue.poll()) != null) {
-                    enqueuedPlayers.remove(id);
-                    Player p = Bukkit.getPlayer(id);
-                    if (p != null && p.isOnline()) {
-                        // Previously done on every PlayerMoveEvent — now limited by a per-tick budget
-                        skinUpdateTracker.onPlayerMove(p);
-                    }
-                    processed++;
-                }
-            }
-        }.runTaskTimer(plugin, 1L, 1L);
+        // Note: Player movement is handled via Bukkit's PlayerMoveEvent below,
+        // with a very cheap block-change filter and a direct call into the tracker.
+        // No reflection, no queues, no per-tick budgets.
     }
 
     private void checkCreationEvent(CommandSenderCreateNPCEvent event) {
@@ -325,8 +306,7 @@ public class EventListen implements Listener {
         if (SpigotUtil.getVersion()[1] < 21) {
             for (Entity entity : event.getChunk().getEntities()) {
                 NPC npc = plugin.getNPCRegistry().getNPC(entity);
-                // XXX npc#isSpawned() checks valid status which is now inconsistent on chunk unload
-                // between different server software so check for npc.getEntity() == null instead.
+                // npc#isSpawned() validity is inconsistent on unload across servers; use entity null check.
                 if (npc == null || npc.getEntity() == null || toDespawn.contains(npc))
                     continue;
 
@@ -652,8 +632,8 @@ public class EventListen implements Listener {
             NMS.replaceTracker(event.getPlayer());
             NMS.removeFromServerPlayerList(event.getPlayer());
         }, 1);
-        // on teleport, player NPCs are added to the server player list. this is
-        // undesirable as player NPCs are not real players and confuse plugins.
+        // On teleport, player NPCs are added to the server player list which confuses plugins.
+        // Remove them after a tick.
     }
 
     @EventHandler(ignoreCancelled = true)
@@ -680,76 +660,30 @@ public class EventListen implements Listener {
         }
     }
 
-    @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
-    public void onPlayerInteractEntity(PlayerInteractEntityEvent event) {
-        NPC npc = plugin.getNPCRegistry().getNPC(event.getRightClicked());
-        if (npc == null || Util.isOffHand(event))
-            return;
-
-        ClickRedirectTrait crt = npc.getTraitNullable(ClickRedirectTrait.class);
-        if (crt != null && (npc = crt.getRedirectToNPC()) == null)
-            return;
-
-        Player player = event.getPlayer();
-        NPCRightClickEvent rightClickEvent = new NPCRightClickEvent(npc, player);
-        if (event.getPlayer().getItemInHand().getType() == Material.NAME_TAG) {
-            rightClickEvent.setCancelled(npc.isProtected());
-        }
-        Bukkit.getPluginManager().callEvent(rightClickEvent);
-        if (rightClickEvent.isCancelled()) {
-            event.setCancelled(true);
-            return;
-        }
-        if (npc.hasTrait(CommandTrait.class)) {
-            npc.getTraitNullable(CommandTrait.class).dispatch(player, CommandTrait.Hand.RIGHT);
-            rightClickEvent.setDelayedCancellation(true);
-        }
-        if (rightClickEvent.isDelayedCancellation()) {
-            event.setCancelled(true);
-        }
-        if (event.isCancelled()) {
-            if (SUPPORT_STOP_USE_ITEM) {
-                try {
-                    PlayerAnimation.STOP_USE_ITEM.play(player);
-                    Bukkit.getScheduler().scheduleSyncDelayedTask(plugin,
-                            () -> PlayerAnimation.STOP_USE_ITEM.play(player));
-                } catch (UnsupportedOperationException e) {
-                    SUPPORT_STOP_USE_ITEM = false;
-                }
-            }
-        }
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR)
-    public void onPlayerJoin(PlayerJoinEvent event) {
-        skinUpdateTracker.updatePlayer(event.getPlayer(), Setting.INITIAL_PLAYER_JOIN_SKIN_PACKET_DELAY.asTicks(),
-                true);
-        plugin.getLocationLookup().onJoin(event);
-    }
-
-    @EventHandler(ignoreCancelled = true)
-    public void onPlayerLeashEntity(PlayerLeashEntityEvent event) {
-        NPC npc = plugin.getNPCRegistry().getNPC(event.getEntity());
-        if (npc == null)
-            return;
-
-        boolean leashProtected = npc.isProtected();
-        if (npc.data().get(NPC.Metadata.LEASH_PROTECTED, leashProtected)) {
-            event.setCancelled(true);
-        }
-    }
-
-    // recalculate player NPCs the first time a player moves and every time
-    // a player moves a certain distance from their last position.
+    // Player movement handling: ultra-lightweight and direct.
+    // We ignore pure look changes and micro-movements within the same block.
+    // On actual block-to-block movement (or world change), we invoke the tracker immediately.
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerMove(PlayerMoveEvent event) {
-        // If Paper's EntityMoveEvent is available — use it instead of PlayerMoveEvent (to avoid duplicate handling)
-        if (hasPaperEntityMoveEvent)
+        final Location from = event.getFrom();
+        final Location to = event.getTo();
+        if (to == null) return;
+
+        // If the world changed, always treat as significant
+        if (!Objects.equals(from.getWorld(), to.getWorld())) {
+            skinUpdateTracker.onPlayerMove(event.getPlayer());
             return;
-        // Filter: ignore micro-movement (no chunk change and small delta)
-        if (!movedEnough(event.getFrom(), event.getTo()))
-            return;
-        enqueuePlayerMovement(event.getPlayer(), event.getFrom(), event.getTo());
+        }
+
+        // Cheap integer comparison: only process when the player changes block coordinates
+        if (from.getBlockX() == to.getBlockX()
+                && from.getBlockY() == to.getBlockY()
+                && from.getBlockZ() == to.getBlockZ()) {
+            return; // same block -> ignore (pure rotation or sub-block movement)
+        }
+
+        // Direct call: no reflection, no queue, no per-tick budget
+        skinUpdateTracker.onPlayerMove(event.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -797,8 +731,7 @@ public class EventListen implements Listener {
 
     @EventHandler
     public void onPluginDisable(PluginDisableEvent event) {
-        // hack: Spigot now unloads plugin classes on disable in reverse order so prefer unloading at the start of
-        // plugin disable cycle
+        // Spigot unloads plugin classes on disable in reverse order, so react early if Citizens is a dependency
         PluginDescriptionFile file = event.getPlugin().getDescription();
         for (String depend : Iterables.concat(file.getDepend(), file.getSoftDepend())) {
             if (depend.equalsIgnoreCase("citizens") && plugin.isEnabled()) {
@@ -920,6 +853,7 @@ public class EventListen implements Listener {
         plugin.getLocationLookup().onWorldUnload(event);
     }
 
+    // Paper knockback bridge (NPC-only). Reflective to avoid hard dependency on Paper.
     private void registerKnockbackEvent(Class<?> kbc) {
         try {
             HandlerList handlers = (HandlerList) kbc.getMethod("getHandlerList").invoke(null);
@@ -952,6 +886,7 @@ public class EventListen implements Listener {
         }
     }
 
+    // Paper entity move bridge (NPC-only). Reflective to avoid hard dependency on Paper.
     private void registerMoveEvent(Class<?> clazz) {
         try {
             final HandlerList handlers = (HandlerList) clazz.getMethod("getHandlerList").invoke(null);
@@ -990,36 +925,7 @@ public class EventListen implements Listener {
         }
     }
 
-    // Player movement event registration (Paper)
-    private void registerPlayerMoveEvent(Class<?> clazz) {
-        try {
-            final HandlerList handlers = (HandlerList) clazz.getMethod("getHandlerList").invoke(null);
-            final Method getEntity = clazz.getMethod("getEntity");
-            final Method getFrom = clazz.getMethod("getFrom");
-            final Method getTo = clazz.getMethod("getTo");
-            handlers.register(new RegisteredListener(new Listener() {
-            }, (listener, event) -> {
-                if (event.getClass() != clazz)
-                    return;
-                try {
-                    final Entity entity = (Entity) getEntity.invoke(event);
-                    if (!(entity instanceof Player))
-                        return;
-                    final Location from = (Location) getFrom.invoke(event);
-                    final Location to = (Location) getTo.invoke(event);
-                    if (!movedEnough(from, to))
-                        return;
-                    enqueuePlayerMovement((Player) entity, from, to);
-                } catch (Throwable ex) {
-                    ex.printStackTrace();
-                }
-            }, EventPriority.MONITOR, plugin, true));
-        } catch (Throwable ex) {
-            Messaging.severe("Error registering player move event forwarder");
-            ex.printStackTrace();
-        }
-    }
-
+    // Paper push-by-attack bridge (NPC-only). Reflective to avoid hard dependency on Paper.
     private void registerPushEvent(Class<?> clazz) {
         try {
             HandlerList handlers = (HandlerList) clazz.getMethod("getHandlerList").invoke(null);
@@ -1121,27 +1027,6 @@ public class EventListen implements Listener {
                     event.getChunk().load();
                 }
             }, 10);
-        }
-    }
-
-    private static boolean SUPPORT_STOP_USE_ITEM = true;
-
-    private boolean movedEnough(Location from, Location to) {
-        if (from == null || to == null) return false;
-        if (!Objects.equals(from.getWorld(), to.getWorld())) return true;
-        // Consider movement significant if the chunk changed or delta > ~0.2 block
-        if ((from.getBlockX() >> 4) != (to.getBlockX() >> 4)) return true;
-        if ((from.getBlockZ() >> 4) != (to.getBlockZ() >> 4)) return true;
-        double dx = to.getX() - from.getX();
-        double dy = to.getY() - from.getY();
-        double dz = to.getZ() - from.getZ();
-        return (dx * dx + dy * dy + dz * dz) > 0.04; // 0.2^2
-    }
-
-    private void enqueuePlayerMovement(Player player, Location from, Location to) {
-        UUID id = player.getUniqueId();
-        if (enqueuedPlayers.add(id)) {
-            movedPlayersQueue.add(id);
         }
     }
 }
