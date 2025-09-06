@@ -450,7 +450,7 @@ public class CitizensNavigator implements Navigator, Runnable {
         if (targetIn == null) {
             cancelNavigation();
             return;
-
+        }
         
         Location target = targetIn.clone();
 
@@ -668,3 +668,4 @@ public class CitizensNavigator implements Navigator, Runnable {
         }
     }
 }
+
